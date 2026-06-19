@@ -1,6 +1,13 @@
 # Guía del Entorno Configurable
 Este entorno contiene tres escenarios de auditoría de seguridad configurados dinámicamente mediante Ansible. El objetivo es realizar el compromiso total de la máquina víctima desde un equipo externo (Kali Linux), simulando un entorno real de pentesting.
 
+## 📥 Descarga
+
+Debido a las limitaciones de tamaño de archivo de GitHub, la máquina virtual preconfigurada en formato OVA está alojada externamente:
+
+**[⬇️ Descargar OVA (Google Drive)](https://drive.google.com/file/d/1PJM7DmvSJTQRu-ErZ3iab52o4sUHEXYm/view?usp=sharing)**
+
+> Tamaño del archivo: ~3.3 GB | Formato: Open Virtualization Archive (.ova)
 
 ## Requisitos previos
 
