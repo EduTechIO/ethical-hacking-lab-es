@@ -1,0 +1,158 @@
+---
+- name: "Instalar Apache, PHP y herramientas de compresion"
+  apt:
+    name: [apache2, php, libapache2-mod-php, php-zip, unzip, python3]
+    state: present
+    update_cache: yes
+  tags: nivel3_deploy
+
+- name: "Colocar nota informativa en la raiz (Hint para Backups)"
+  copy:
+    dest: /NOTA_IMPORTANTE.txt
+    content: |
+      [!] REPORTE DE INCIDENCIA #402 [!]
+      El portal de desarrollo ha sido movido para evitar ataques externos.
+      Ruta activa del portal: /var/www/dev.fintech.local/
+      Carpeta de backups internos: /var/www/dev.fintech.local/backups/
+    owner: root
+    group: root
+    mode: '0644'
+  tags: nivel3_deploy
+
+- name: "Borrar el index.html de mantenimiento"
+  file:
+    path: /var/www/html/index.html
+    state: absent
+  tags: nivel3_deploy
+
+- name: "Configurar index.php y robots.txt"
+  copy:
+    dest: "/var/www/html/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: www-data
+    group: www-data
+  loop:
+    - name: 'index.php'
+      content: |
+        <html><body style="font-family: Arial; text-align: center; padding: 50px;">
+        <h2>Fintech Solutions - Soporte</h2>
+        <p>Servidor en mantenimiento programado. Contactar con IT.</p>
+        </body></html>
+    - name: 'robots.txt'
+      content: |
+        User-agent: *
+        Disallow: /admin/
+        # Nota para devs: dev.fintech.local es el entorno activo.
+  tags: nivel3_deploy
+
+- name: "Crear carpetas para el subdominio dev"
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0755'
+  loop:
+    - /var/www/dev.fintech.local
+    - /var/www/dev.fintech.local/docs
+    - /var/www/dev.fintech.local/backups
+  tags: nivel3_deploy
+
+- name: "Desplegar index.php (Estilo Hacker)"
+  copy:
+    dest: /var/www/dev.fintech.local/index.php
+    owner: www-data
+    group: www-data
+    content: |
+      <body style="font-family: monospace; background: #000; color: #0f0; padding: 30px;">
+        <h2>FINTECH - INTERNAL DEV AREA</h2>
+        <p>FLAG 1: {{ '{' }}{{ flag1_val | default('FLAG1_PENDIENTE') }}{{ '}' }}</p>
+        <hr color="#0f0">
+        <div style="border: 1px solid #0f0; padding: 20px; width: 500px; margin-top: 20px;">
+            <h3>Subida de Documentación (.zip)</h3>
+            <form action="upload.php" method="POST" enctype="multipart/form-data">
+                <input type="file" name="zip_file" required style="color:#0f0;"><br><br>
+                <input type="submit" value="[ EJECUTAR DESPLIEGUE ]" style="background:#0f0; color:#000; border:none; padding:10px; cursor:pointer;">
+            </form>
+        </div>
+      </body>
+  tags: nivel3_deploy
+
+- name: "Desplegar upload.php (Vulnerable)"
+  copy:
+    dest: /var/www/dev.fintech.local/upload.php
+    owner: www-data
+    group: www-data
+    content: |
+      <?php
+      if (isset($_FILES['zip_file'])) {
+          $zip = new ZipArchive;
+          if ($zip->open($_FILES['zip_file']['tmp_name']) === TRUE) {
+              $zip->extractTo('/var/www/dev.fintech.local/docs/');
+              $zip->close();
+              echo "<body style='background:#000; color:#0f0; font-family:monospace; padding:20px;'><h3>Se ha subido el zip correctamente y ha sido extraído en /docs/</h3><a href='index.php' style='color:#0f0;'>[ Volver ]</a></body>";
+          } else { echo "Error."; }
+      }
+      ?>
+  tags: nivel3_deploy
+
+- name: "Configurar VirtualHost y Backups"
+  shell: |
+    echo "<VirtualHost *:80>
+        ServerName dev.fintech.local
+        DocumentRoot /var/www/dev.fintech.local
+        <Directory /var/www/dev.fintech.local>
+            Options -Indexes +FollowSymLinks
+            AllowOverride All
+            Require all granted
+        </Directory>
+    </VirtualHost>" > /etc/apache2/sites-available/dev.fintech.local.conf
+    a2ensite dev.fintech.local.conf
+    echo "FLAG 2: {{ '{' }}{{ flag2_val | default('FLAG2_PENDIENTE') }}{{ '}' }}" > /var/www/dev.fintech.local/backups/flag2.txt
+    echo "INSERT INTO users VALUES ('devops', '0192023a7bbd73250516f069df18b500');" > /var/www/dev.fintech.local/backups/db_dump.sql
+    chown -R www-data:www-data /var/www/dev.fintech.local/
+    systemctl restart apache2
+  tags: nivel3_deploy
+
+- name: "Crear usuario devops y password admin123"
+  shell: |
+    useradd -m -s /bin/bash devops 2>/dev/null || true
+    echo "devops:admin123" | chpasswd
+  tags: nivel3_deploy
+
+- name: "Colocar Flags y el Cebo de Root en la home de devops"
+  copy:
+    dest: "{{ item.dest }}"
+    content: "{{ item.content }}"
+    owner: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { dest: '/home/devops/flag3.txt', content: "FLAG 3: {{ '{' }}{{ flag3_val | default('FLAG3_PENDIENTE') }}{{ '}' }}\n", owner: 'devops', mode: '0644' }
+    - { dest: '/home/devops/NOTA_IMPORTANTE_ROOT.txt', content: "[+] PRIVILEGIOS ELEVADOS DETECTADOS [+]\nSolo el usuario root puede leer esta nota y acceder a su carpeta situada en /root\n", owner: 'root', mode: '0400' }
+    - { dest: '/root/flag4.txt', content: "FLAG 4: {{ '{' }}{{ flag4_val | default('FLAG4_PENDIENTE') }}{{ '}' }}\n", owner: 'root', mode: '0400' }
+  tags: nivel3_deploy
+
+- name: "Configurar SUDO (Python3)"
+  lineinfile:
+    path: /etc/sudoers
+    line: 'devops ALL=(ALL) NOPASSWD: /usr/bin/python3'
+    validate: 'visudo -cf %s'
+  tags: nivel3_deploy
+
+- name: "Resetear Nivel 3 - Limpieza de Sistema"
+  shell: |
+    a2dissite dev.fintech.local.conf || true
+    rm -f /etc/apache2/sites-available/dev.fintech.local.conf
+    rm -rf /var/www/dev.fintech.local
+    rm -rf /var/www/html/*
+    echo "<html><body><h1>Servidor en mantenimiento</h1><p>Laboratorio Nivel 3 cerrado.</p></body></html>" > /var/www/html/index.html
+    rm -f /NOTA_IMPORTANTE.txt
+    rm -f /root/flag4.txt
+    rm -f /root/nota_importante.txt
+    pkill -u devops || true
+    sleep 1
+    userdel -r devops || true
+    sed -i '/devops ALL=(ALL) NOPASSWD: \/usr\/bin\/python3/d' /etc/sudoers
+    systemctl restart apache2
+  tags: nivel3_reset
+  ignore_errors: yes

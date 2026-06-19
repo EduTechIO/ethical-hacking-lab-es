@@ -1,0 +1,214 @@
+---
+- name: "Instalar servicios basicos (Apache, PHP, FTP)"
+  apt:
+    name: [apache2, php, libapache2-mod-php, vsftpd]
+    state: present
+    update_cache: yes
+  tags: nivel1_deploy
+
+- name: "Configurar vsftpd para acceso anonimo"
+  copy:
+    dest: /etc/vsftpd.conf
+    content: |
+      listen=YES
+      local_enable=YES
+      write_enable=NO
+      anonymous_enable=YES
+      no_anon_password=YES
+      anon_root=/var/ftp/pub
+      use_localtime=YES
+      secure_chroot_dir=/var/run/vsftpd/empty
+  tags: nivel1_deploy
+
+- name: "Estructura de directorios FTP"
+  file:
+    path: /var/ftp/pub
+    state: directory
+    mode: '0755'
+  tags: nivel1_deploy
+
+- name: "Archivos de informacion en FTP (Flag 1)"
+  copy:
+    dest: "/var/ftp/pub/{{ item.name }}"
+    content: "{{ item.content }}"
+    mode: '0644'
+  loop:
+    - name: 'flag1.txt'
+      content: "FLAG 1: {{ '{' }}{{ flag1_val }}{{ '}' }}\n"
+    - name: 'nota_informativa.txt'
+      content: |
+        ### NOTA DE SOPORTE IT ###
+        Estamos migrando el panel de administracion al puerto 80 (HTTP).
+        Credenciales temporales para el equipo de desarrollo:
+        Usuario: admin
+        Clave: p@ss_admin_2026
+  tags: nivel1_deploy
+
+- name: "Reiniciar FTP para aplicar cambios"
+  service:
+    name: vsftpd
+    state: restarted
+  tags: nivel1_deploy
+
+- name: "Limpiar index.html previo"
+  file:
+    path: /var/www/html/index.html
+    state: absent
+  tags: nivel1_deploy
+
+- name: "Desplegar portal de login (Flag 2)"
+  copy:
+    dest: /var/www/html/index.php
+    owner: www-data
+    group: www-data
+    content: |
+      <?php
+      $user_valido = "admin";
+      $pass_valido = "p@ss_admin_2026";
+      if (($_POST['user'] ?? '') === $user_valido && ($_POST['pass'] ?? '') === $pass_valido) {
+          echo "<body style='font-family: sans-serif; background: #fafafa; padding: 40px;'>";
+          echo "<div style='border: 1px solid #000; padding: 20px; max-width: 600px; margin: auto; background: #fff;'>";
+          echo "<h2>Portal de Gestion Interna</h2>";
+          echo "<p>Acceso concedido satisfactoriamente.</p>";
+          echo "<p style='color: green;'>FLAG 2: {{ '{' }}{{ flag2_val }}{{ '}' }}</p>";
+          echo "<hr>";
+          echo "<p><i>Aviso: Consultar el directorio de las copias de seguridad para las claves SSH.</i></p>";
+          echo "</div></body>";
+      } else { ?>
+      <body style="font-family: Arial; background: #f0f0f0; text-align: center; padding-top: 80px;">
+          <div style="background: white; display: inline-block; padding: 30px; border: 1px solid #bbb;">
+              <h3>Autenticacion Requerida</h3>
+              <form method="POST">
+                  <input type="text" name="user" placeholder="Usuario" required style="margin-bottom: 10px;"><br>
+                  <input type="password" name="pass" placeholder="Password" required style="margin-bottom: 10px;"><br>
+                  <input type="submit" value="Ingresar">
+              </form>
+          </div>
+      </body>
+      <?php } ?>
+  tags: nivel1_deploy
+
+- name: "Archivo de backup con acceso SSH"
+  copy:
+    dest: /var/www/html/backup
+    owner: www-data
+    group: www-data
+    mode: '0644'
+    content: |
+      --- REGISTRO DE MANTENIMIENTO ---
+      Si falla el panel web, usar acceso directo por consola:
+      Usuario: operador
+      Clave: op_lab_2026
+  tags: nivel1_deploy
+
+- name: "Crear cuenta de operador con rbash"
+  user:
+    name: operador
+    password: "{{ 'op_lab_2026' | password_hash('sha512') }}"
+    shell: /bin/rbash
+    create_home: yes
+    state: present
+  tags: nivel1_deploy
+
+- name: "Crear directorio bin restringido"
+  file:
+    path: /home/operador/bin
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  tags: nivel1_deploy
+
+- name: "Vincular comandos permitidos"
+  file:
+    src: "/bin/{{ item }}"
+    dest: "/home/operador/bin/{{ item }}"
+    state: link
+  loop: ['ls', 'cat', 'dircolors']
+  tags: nivel1_deploy
+
+- name: "Configurar .bashrc"
+  copy:
+    dest: /home/operador/.bashrc
+    content: |
+      shopt -u progcomp
+      export TERM=xterm-256color
+      test -r ~/.dircolors && eval "$(dircolors -b ~/.dircolors)" || eval "$(dircolors -b)"
+      alias ls='ls --color=auto'
+      PS1='${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+    owner: root
+    group: root
+    mode: '0644'
+  tags: nivel1_deploy
+
+- name: "Forzar PATH en .bash_profile"
+  copy:
+    dest: /home/operador/.bash_profile
+    content: |
+      if [ -f ~/.bashrc ]; then . ~/.bashrc; fi
+      PATH=$HOME/bin
+      export PATH
+      readonly PATH
+    owner: root
+    group: root
+    mode: '0644'
+  tags: nivel1_deploy
+
+- name: "Colocar Flag 3"
+  copy:
+    dest: /home/operador/flag3.txt
+    content: "FLAG 3: {{ '{' }}{{ flag3_val }}{{ '}' }}\n"
+    owner: operador
+    group: operador
+    mode: '0400'
+  tags: nivel1_deploy
+
+- name: "Abrir puertos en UFW e inicio de servicios"
+  shell: |
+    ufw allow 80/tcp
+    ufw allow 21/tcp
+    ufw allow 22/tcp
+    systemctl restart vsftpd apache2
+  tags: nivel1_deploy
+
+- name: "Eliminar rastro del usuario operador"
+  user:
+    name: operador
+    state: absent
+    remove: yes
+    force: yes
+  tags: nivel1_reset
+
+- name: "Limpiar carpetas y archivos de servicios"
+  shell: |
+    rm -rf /var/www/html/*
+    echo "<html><body><h1>Servidor en mantenimiento</h1><p>El laboratorio esta cerrado actualmente.</p></body></html>" > /var/www/html/index.html
+    rm -rf /var/ftp
+    rm -rf /home/operador
+  tags: nivel1_reset
+
+- name: "Restaurar configuracion original de FTP"
+  copy:
+    dest: /etc/vsftpd.conf
+    content: |
+      listen=NO
+      listen_ipv6=YES
+      anonymous_enable=NO
+      local_enable=YES
+      write_enable=YES
+      dirmessage_enable=YES
+      use_localtime=YES
+      xferlog_enable=YES
+      connect_from_port_20=YES
+      secure_chroot_dir=/var/run/vsftpd/empty
+      pam_service_name=vsftpd
+  tags: nivel1_reset
+
+- name: "Reset de Red y parada de servicios"
+  shell: |
+    systemctl stop vsftpd || true
+    systemctl restart apache2 || true 
+    ufw delete allow 21/tcp || true
+    pkill -9 -u operador || true
+    pkill -9 -u www-data || true
+  tags: nivel1_reset

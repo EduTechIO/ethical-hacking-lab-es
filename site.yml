@@ -1,0 +1,7 @@
+---
+- hosts: all
+  become: yes
+  roles:
+    - nivel_basico
+    - nivel_medio
+    - nivel_dificil

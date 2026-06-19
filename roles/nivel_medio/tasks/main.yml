@@ -1,0 +1,173 @@
+---
+- name: "Instalacion de paquetes de servidor (LAMP stack)"
+  apt:
+    name: [apache2, php, libapache2-mod-php, mariadb-server, php-mysql]
+    state: present
+    update_cache: yes
+  tags: nivel2_deploy
+
+- name: "Asegurar que MariaDB y Apache estan activos"
+  service:
+    name: "{{ item }}"
+    state: started
+    enabled: yes
+  loop: [mariadb, apache2]
+  tags: nivel2_deploy
+
+- name: "Borrar index.html de mantenimiento"
+  file:
+    path: /var/www/html/index.html
+    state: absent
+  tags: nivel2_deploy
+
+- name: "Configuracion de la base de datos empleados_db"
+  shell: |
+    mysql -e "CREATE DATABASE IF NOT EXISTS empleados_db;"
+    mysql -e "CREATE USER IF NOT EXISTS 'admin_rh'@'localhost' IDENTIFIED BY 'rh_admin_db_pass';"
+    mysql -e "GRANT ALL PRIVILEGES ON empleados_db.* TO 'admin_rh'@'localhost';"
+    mysql -e "FLUSH PRIVILEGES;"
+    mysql -e "USE empleados_db; DROP TABLE IF EXISTS plantilla;"
+    mysql -e "USE empleados_db; CREATE TABLE plantilla (id INT AUTO_INCREMENT PRIMARY KEY, username VARCHAR(50), password VARCHAR(50), info_adicional VARCHAR(100));"
+    mysql -e "USE empleados_db; INSERT INTO plantilla VALUES (NULL, 'pepe', MD5('pepe123'), 'Empleado estandar');"
+    mysql -e "USE empleados_db; INSERT INTO plantilla VALUES (NULL, 'director', MD5('pascual'), 'FLAG 1: {{ '{' }}{{ flag1_val }}{{ '}' }}');"
+  tags: nivel2_deploy
+
+- name: "Crear index.php (Vulnerable a SQL Injection)"
+  copy:
+    dest: /var/www/html/index.php
+    owner: www-data
+    group: www-data
+    content: |
+      <?php
+      session_start();
+      if ($_POST) {
+          $user = $_POST['user'];
+          $pass = md5($_POST['pass']);
+          $db = new mysqli("localhost", "admin_rh", "rh_admin_db_pass", "empleados_db");
+          $sql = "SELECT username FROM plantilla WHERE username = '$user' AND password = '$pass'";
+          $resultado = $db->query($sql);
+          if ($resultado && $resultado->num_rows > 0) {
+              $row = $resultado->fetch_assoc();
+              $_SESSION['user'] = $row['username'];
+              header("Location: panel.php");
+          } else { $error = "Credenciales invalidas."; }
+      }
+      ?>
+      <body style="font-family: sans-serif; background: #f4f4f4; text-align: center; padding-top: 50px;">
+          <div style="background: #fff; width: 350px; margin: auto; padding: 25px; border: 1px solid #ccc;">
+              <h3>Gestion de Personal - Login</h3>
+              <form method="POST">
+                  <input type="text" name="user" placeholder="Usuario" required style="width:90%; padding:8px; margin-bottom:10px;"><br>
+                  <input type="password" name="pass" placeholder="Contraseña" required style="width:90%; padding:8px; margin-bottom:10px;"><br>
+                  <input type="submit" value="Entrar al Panel" style="width:95%; background: #007bff; color: white; border: none; padding: 10px; cursor: pointer;">
+              </form>
+              <?php if(isset($error)) echo "<p style='color:red;'>$error</p>"; ?>
+          </div>
+      </body>
+  tags: nivel2_deploy
+
+- name: "Crear panel.php (Control de privilegios)"
+  copy:
+    dest: /var/www/html/panel.php
+    owner: www-data
+    group: www-data
+    content: |
+      <?php
+      session_start();
+      if (!isset($_SESSION['user'])) { header("Location: index.php"); exit; }
+      $usuario = $_SESSION['user'];
+      ?>
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+          <meta charset="UTF-8">
+          <title>Panel Interno</title>
+          <style>
+              body { font-family: Arial, sans-serif; background-color: #f4f4f4; margin: 40px; }
+              .container { background-color: #fff; padding: 30px; border: 1px solid #ccc; max-width: 800px; margin: auto; }
+              .alert { padding: 15px; color: #a94442; background-color: #f2dede; border: 1px solid #ebccd1; }
+              .admin { padding: 15px; background-color: #fcf8e3; border: 1px solid #faebcc; }
+          </style>
+      </head>
+      <body>
+          <div class="container">
+              <h2>Portal de RRHH</h2>
+              <p>Usuario: <strong><?php echo htmlspecialchars($usuario); ?></strong></p>
+              <hr>
+              <?php if ($usuario === 'director'): ?>
+                  <div class="admin">
+                      <h4>Zona de Direccion</h4>
+                      <p>Token de seguridad (Flag 2): <code>{{ '{' }}{{ flag2_val }}{{ '}' }}</code></p>
+                      <hr>
+                      <h4>Carga de Documentacion</h4>
+                      <form action="upload.php" method="POST" enctype="multipart/form-data">
+                          <input type="file" name="archivo" required><br><br>
+                          <input type="submit" value="Subir Archivo">
+                      </form>
+                  </div>
+              <?php else: ?>
+                  <div class="alert">
+                      <strong>Acceso Denegado:</strong> Su perfil no dispone de permisos para gestionar archivos ni ver tokens.
+                  </div>
+              <?php endif; ?>
+              <p><a href="index.php">Cerrar sesion</a></p>
+          </div>
+      </body>
+      </html>
+  tags: nivel2_deploy
+
+- name: "Crear upload.php (Vulnerable a RCE)"
+  copy:
+    dest: /var/www/html/upload.php
+    owner: www-data
+    group: www-data
+    content: |
+      <?php
+      if (isset($_FILES['archivo'])) {
+          $upload_dir = "uploads/";
+          $target_path = $upload_dir . basename($_FILES['archivo']['name']);
+          if (move_uploaded_file($_FILES['archivo']['tmp_name'], $target_path)) {
+              echo "Archivo procesado: <a href='$target_path'>$target_path</a>";
+          } else { echo "Error en la subida."; }
+      }
+      ?>
+      <br><br><a href="index.php">Volver</a>
+  tags: nivel2_deploy
+
+- name: "Crear directorio de subidas"
+  file:
+    path: /var/www/html/uploads
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0755'
+  tags: nivel2_deploy
+
+- name: "Colocar Flag 3 en la raiz"
+  copy:
+    dest: /flag3.txt
+    content: "FLAG 3: {{ '{' }}{{ flag3_val }}{{ '}' }}\n"
+    owner: root
+    group: www-data
+    mode: '0440'
+  tags: nivel2_deploy
+
+- name: "Bloquear carpeta personal de sysadmin"
+  file:
+    path: /home/sysadmin
+    mode: '0700'
+    state: directory
+  tags: nivel2_deploy
+
+- name: "Limpiar todo el entorno (Reset Nivel 2)"
+  shell: |
+    mysql -e "DROP DATABASE IF EXISTS empleados_db;" 2>/dev/null || true
+    mysql -e "DROP USER IF EXISTS 'admin_rh'@'localhost';" 2>/dev/null || true
+    rm -rf /var/www/html/*
+    rm -f /flag3.txt
+    echo "<html><body><h1>Servidor en mantenimiento</h1></body></html>" > /var/www/html/index.html
+    systemctl stop mariadb || true
+    systemctl restart apache2 || true
+    pkill -9 -u www-data || true
+  tags: nivel2_reset
+  ignore_errors: yes
